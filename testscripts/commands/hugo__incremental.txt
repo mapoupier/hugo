@@ -1,0 +1,35 @@
+# Test the --incremental flag.
+
+hugo --incremental
+stdout 'Pages.*|3'
+checkfile public/p1/index.html
+checkfile $WORK/hugocache/hugo_build_state.json.gz
+grep 'P1 v1' public/p1/index.html
+
+# No changes.
+hugo --incremental
+checkfile public/p1/index.html
+
+# Edit a page.
+replace content/p1.md 'P1 v1' 'P1 v2'
+hugo --incremental
+grep 'P1 v2' public/p1/index.html
+grep '/p1/' public/index.html
+
+-- hugo.toml --
+baseURL = "http://example.org/"
+disableKinds = ["RSS", "sitemap", "robotsTXT", "404", "taxonomy", "term"]
+-- layouts/home.html --
+Home|{{ range .RegularPages }}{{ .RelPermalink }}|{{ end }}
+-- layouts/page.html --
+Title: {{ .Title }}|{{ .Content }}
+-- content/p1.md --
+---
+title: "P1"
+---
+P1 v1
+-- content/p2.md --
+---
+title: "P2"
+---
+P2 v1

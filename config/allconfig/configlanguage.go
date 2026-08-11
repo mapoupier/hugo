@@ -159,8 +159,12 @@ func (c ConfigLanguage) Watching() bool {
 	return c.m.Base.Internal.Watch
 }
 
+func (c ConfigLanguage) TrackDependencies() bool {
+	return c.m.Base.Internal.TrackDependencies
+}
+
 func (c ConfigLanguage) NewIdentityManager(opts ...identity.ManagerOption) identity.Manager {
-	if !c.Watching() {
+	if !c.TrackDependencies() {
 		return identity.NopManager
 	}
 	return identity.NewManager(opts...)

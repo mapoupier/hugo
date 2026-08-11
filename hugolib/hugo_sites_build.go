@@ -194,6 +194,8 @@ func (h *HugoSites) Build(config BuildCfg, events ...fsnotify.Event) error {
 	}
 
 	if prepareErr == nil {
+		h.incrementalPrepareRender(conf)
+
 		if err := h.render(infol, conf); err != nil {
 			h.SendError(fmt.Errorf("render: %w", err))
 		}
@@ -245,6 +247,10 @@ func (h *HugoSites) Build(config BuildCfg, events ...fsnotify.Event) error {
 	errorCount := h.Log.LoggCount(logg.LevelError) + loggers.Log().LoggCount(logg.LevelError)
 	if errorCount > 0 {
 		return fmt.Errorf("logged %d error(s)", errorCount)
+	}
+
+	if err := h.incrementalSaveState(); err != nil {
+		h.Log.Warnf("incremental: failed to save build state: %s", err)
 	}
 
 	return nil
@@ -787,7 +793,7 @@ func (h *HugoSites) writeBuildStats() error {
 	// hugo_stats.json so that elements from pages not rendered in this build
 	// are preserved (e.g. so Tailwind doesn't strip their classes).
 	// See issue 14939.
-	if len(h.Configs.Base.RenderSegments) > 0 && len(existingContent) > 0 {
+	if (len(h.Configs.Base.RenderSegments) > 0 || (h.incremental != nil && h.incremental.skipped > 0)) && len(existingContent) > 0 {
 		var existing publisher.PublishStats
 		if err := json.Unmarshal(existingContent, &existing); err == nil {
 			htmlElements.Merge(existing.HTMLElements)

@@ -357,7 +357,7 @@ func (m *pageMap) addPagesFromGoTmplFi(fi hugofs.FileMetaInfo, buildConfig *Buil
 					}
 				},
 				DependencyManager: s.Conf.NewIdentityManager(),
-				Watching:          s.Conf.Watching(),
+				Watching:          s.Conf.TrackDependencies(),
 				HandlePage: func(pt *pagesfromdata.PagesFromTemplate, pe *pagemeta.PageConfigEarly) error {
 					s := pt.Site.(*Site)
 

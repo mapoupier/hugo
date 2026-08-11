@@ -673,7 +673,7 @@ func (c *cachedContentScope) contentToC(ctx context.Context) (contentTableOfCont
 			// Merge content placeholders
 			maps0.Copy(ct.contentPlaceholders, ct2.contentPlaceholders)
 
-			if p.s.conf.Internal.Watch {
+			if p.s.conf.Internal.TrackDependencies {
 				for _, s := range cp2.po.p.m.content.pi.shortcodeParseInfo.shortcodes {
 					cp.trackDependency(s.templ)
 				}

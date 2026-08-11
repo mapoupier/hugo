@@ -247,7 +247,7 @@ func NewHugoSites(cfg deps.DepsCfg) (*HugoSites, error) {
 
 	}
 
-	memCache := dynacache.New(dynacache.Options{Watching: conf.Watching(), Log: logger})
+	memCache := dynacache.New(dynacache.Options{Watching: conf.TrackDependencies(), Log: logger})
 
 	var h *HugoSites
 	onSignalRebuild := func(ids ...identity.Identity) {
@@ -570,7 +570,7 @@ func newHugoSites(
 						tplimpl.StoreOptions{
 							Fs:                     s.BaseFs.Layouts.Fs,
 							Log:                    s.Log,
-							Watching:               s.Conf.Watching(),
+							Watching:               s.Conf.TrackDependencies(),
 							PathParser:             s.Conf.PathParser(),
 							Metrics:                d.Metrics,
 							OutputFormats:          s.conf.OutputFormats.Config,
