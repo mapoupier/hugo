@@ -206,11 +206,11 @@ func TestIncrementalBuildStaticChanges(t *testing.T) {
 	writeStatic("sub/b.txt", "b1")
 
 	b := buildIncremental(t, workingDir, incrementalFilesTemplate)
-	_, _, ok := b.H.IncrementalStaticChanges("")
+	_, _, _, ok := b.H.IncrementalStaticChanges("")
 	b.Assert(ok, qt.IsFalse)
 
 	b = buildIncremental(t, workingDir, incrementalFilesTemplate)
-	changed, total, ok := b.H.IncrementalStaticChanges("")
+	changed, _, total, ok := b.H.IncrementalStaticChanges("")
 	b.Assert(ok, qt.IsTrue)
 	b.Assert(total, qt.Equals, 2)
 	b.Assert(changed, qt.HasLen, 0)
@@ -218,7 +218,7 @@ func TestIncrementalBuildStaticChanges(t *testing.T) {
 	writeStatic("a.txt", "a1 edited")
 	writeStatic("sub/c.txt", "c1")
 	b = buildIncremental(t, workingDir, incrementalFilesTemplate)
-	changed, total, ok = b.H.IncrementalStaticChanges("")
+	changed, _, total, ok = b.H.IncrementalStaticChanges("")
 	b.Assert(ok, qt.IsTrue)
 	b.Assert(total, qt.Equals, 3)
 	b.Assert(changed, qt.DeepEquals, []string{"/a.txt", "/sub/c.txt"})
@@ -226,9 +226,56 @@ func TestIncrementalBuildStaticChanges(t *testing.T) {
 	// Publish dir removed, full sync and full render.
 	b.Assert(os.RemoveAll(filepath.Join(workingDir, "public")), qt.IsNil)
 	b = buildIncremental(t, workingDir, incrementalFilesTemplate)
-	_, _, ok = b.H.IncrementalStaticChanges("")
+	_, _, _, ok = b.H.IncrementalStaticChanges("")
 	b.Assert(ok, qt.IsFalse)
 	b.AssertRenderCountPage(5)
+}
+
+func TestIncrementalBuildCleanDestinationDir(t *testing.T) {
+	workingDir := t.TempDir()
+
+	files := strings.ReplaceAll(incrementalFilesTemplate, "incremental = true", "incremental = true\ncleanDestinationDir = true")
+	writeStatic := func(name, content string) {
+		filename := filepath.Join(workingDir, "static", filepath.FromSlash(name))
+		b := qt.New(t)
+		b.Assert(os.MkdirAll(filepath.Dir(filename), 0o777), qt.IsNil)
+		b.Assert(os.WriteFile(filename, []byte(content), 0o666), qt.IsNil)
+	}
+	writeStatic("sub/a.txt", "a1")
+	writeStatic("b.txt", "b1")
+
+	b := buildIncremental(t, workingDir, files)
+	b.AssertRenderCountPage(5)
+	b = buildIncremental(t, workingDir, files)
+	b.AssertRenderCountPage(0)
+
+	// Simulate the previous static sync.
+	publicDir := filepath.Join(workingDir, "public")
+	b.Assert(os.MkdirAll(filepath.Join(publicDir, "sub"), 0o777), qt.IsNil)
+	b.Assert(os.WriteFile(filepath.Join(publicDir, "sub", "a.txt"), []byte("a1"), 0o666), qt.IsNil)
+	b.Assert(os.WriteFile(filepath.Join(publicDir, "b.txt"), []byte("b1"), 0o666), qt.IsNil)
+
+	// Remove a static file and the only page in s2.
+	b.Assert(os.Remove(filepath.Join(workingDir, "static", "sub", "a.txt")), qt.IsNil)
+	b.Assert(os.Remove(filepath.Join(workingDir, "content", "s2", "p2.md")), qt.IsNil)
+	files = strings.ReplaceAll(files, `-- content/s2/p2.md --
+---
+title: P2
+---
+P2 content.
+`, "")
+	b = buildIncremental(t, workingDir, files)
+	changed, removed, total, ok := b.H.IncrementalStaticChanges("")
+	b.Assert(ok, qt.IsTrue)
+	b.Assert(changed, qt.HasLen, 0)
+	b.Assert(removed, qt.Equals, 1)
+	b.Assert(total, qt.Equals, 1)
+	b.Assert(fileExists(filepath.Join(publicDir, "sub")), qt.IsFalse)
+	b.Assert(fileExists(filepath.Join(publicDir, "b.txt")), qt.IsTrue)
+	b.Assert(fileExists(filepath.Join(publicDir, "s2", "p2", "index.html")), qt.IsFalse)
+	b.Assert(fileExists(filepath.Join(publicDir, "s2")), qt.IsFalse)
+	b.Assert(fileExists(filepath.Join(publicDir, "s1", "p1", "index.html")), qt.IsTrue)
+	b.AssertFileContent("public/index.html", "! /s2/p2/")
 }
 
 func TestIncrementalBuildEditAssetAndData(t *testing.T) {

@@ -104,8 +104,7 @@ func (h *HugoSites) incrementalEnabledBase() bool {
 	c := h.Configs.Base
 	return c.Incremental &&
 		!c.Internal.Watch &&
-		!c.Internal.Running &&
-		!c.CleanDestinationDir
+		!c.Internal.Running
 }
 
 func (h *HugoSites) incrementalPublishDir() string {
@@ -159,8 +158,9 @@ func staticComponent(lang string) string {
 
 // IncrementalStaticChanges returns the static files (slash separated, leading slash)
 // that need to be synced to the publish dir for the given language and the total
-// number of static files. ok is false when a full sync is needed.
-func (h *HugoSites) IncrementalStaticChanges(lang string) (changed []string, total int, ok bool) {
+// number of static files. With cleanDestinationDir set, published files whose
+// source was removed are deleted. ok is false when a full sync is needed.
+func (h *HugoSites) IncrementalStaticChanges(lang string) (changed []string, removed, total int, ok bool) {
 	if !h.incrementalEnabledBase() {
 		return
 	}
@@ -175,7 +175,33 @@ func (h *HugoSites) IncrementalStaticChanges(lang string) (changed []string, tot
 	)
 	changed = append(d.changed[c], d.added[c]...)
 	sort.Strings(changed)
-	return changed, len(ib.cur.Files[c]), true
+
+	if h.Configs.Base.CleanDestinationDir {
+		publishFolder := h.BaseFs.SourceFilesystems.Static[lang].PublishFolder
+		for _, p := range d.removed[c] {
+			if err := removePublished(h.BaseFs.PublishFsStatic, filepath.Join(publishFolder, filepath.FromSlash(p))); err != nil {
+				h.Log.Warnf("incremental: failed to remove %q: %s", p, err)
+				continue
+			}
+			removed++
+		}
+	}
+
+	return changed, removed, len(ib.cur.Files[c]), true
+}
+
+// removePublished removes filename and any parent directories left empty.
+func removePublished(fs afero.Fs, filename string) error {
+	if err := fs.Remove(filename); err != nil && !herrors.IsNotExist(err) {
+		return err
+	}
+	for dir := filepath.Dir(filename); dir != "." && dir != "/" && dir != string(filepath.Separator); dir = filepath.Dir(dir) {
+		if fs.Remove(dir) != nil {
+			// Not empty.
+			break
+		}
+	}
+	return nil
 }
 
 // IncrementalDiscardState removes the persisted build state, e.g. after a failed static sync.
@@ -489,7 +515,11 @@ func (h *HugoSites) incrementalFingerprint() (*buildState, error) {
 		}
 	}
 
-	confHashes := []string{h.Configs.Base.Environment, strings.Join(h.Configs.Base.RenderSegments, ",")}
+	confHashes := []string{
+		h.Configs.Base.Environment,
+		strings.Join(h.Configs.Base.RenderSegments, ","),
+		fmt.Sprint(h.Configs.Base.CleanDestinationDir),
+	}
 	for _, f := range h.Configs.LoadingInfo.ConfigFiles {
 		hashes, err := hashConfigFiles(f)
 		if err != nil {
@@ -633,6 +663,25 @@ func (h *HugoSites) incrementalSaveState() error {
 		}
 		return false
 	})
+
+	if h.Configs.Base.CleanDestinationDir && ib.prev != nil {
+		targets := make(map[string]bool)
+		for _, p := range bs.Pages {
+			targets[p.Target] = true
+		}
+		var removed int
+		for _, p := range ib.prev.Pages {
+			if p.Target == "" || targets[p.Target] {
+				continue
+			}
+			if err := removePublished(h.BaseFs.PublishFs, filepath.FromSlash(p.Target)); err != nil {
+				h.Log.Warnf("incremental: failed to remove %q: %s", p.Target, err)
+				continue
+			}
+			removed++
+		}
+		h.Log.Infof("incremental: removed %d stale page outputs", removed)
+	}
 
 	filename := h.incrementalStateFilename()
 	if err := hugofs.Os.MkdirAll(filepath.Dir(filename), 0o777); err != nil {

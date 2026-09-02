@@ -487,7 +487,7 @@ func (c *hugoBuilder) copyStaticTo(lang string, sourceFs *filesystems.SourceFile
 	if err != nil {
 		return 0, err
 	}
-	if changed, total, ok := h.IncrementalStaticChanges(lang); ok {
+	if changed, removed, total, ok := h.IncrementalStaticChanges(lang); ok {
 		start := time.Now()
 		for _, p := range changed {
 			rel := filepath.FromSlash(p)
@@ -499,7 +499,7 @@ func (c *hugoBuilder) copyStaticTo(lang string, sourceFs *filesystems.SourceFile
 				return 0, err
 			}
 		}
-		loggers.TimeTrackf(infol, start, nil, "incremental: synced %d of %d static files to %s", len(changed), total, publishDir)
+		loggers.TimeTrackf(infol, start, nil, "incremental: synced %d of %d static files (%d removed) to %s", len(changed), total, removed, publishDir)
 		return uint64(total), nil
 	}
 
