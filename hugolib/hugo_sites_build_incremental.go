@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"github.com/gohugoio/hugo/common/hugo"
 	"github.com/gohugoio/hugo/common/paths"
 	"github.com/gohugoio/hugo/common/types"
+	"github.com/gohugoio/hugo/config"
 	"github.com/gohugoio/hugo/hugofs"
 	"github.com/gohugoio/hugo/hugofs/files"
 	"github.com/gohugoio/hugo/hugofs/hglob"
@@ -409,15 +411,45 @@ func (h *HugoSites) incrementalFingerprint() (*buildState, error) {
 
 	confHashes := []string{h.Configs.Base.Environment, strings.Join(h.Configs.Base.RenderSegments, ",")}
 	for _, f := range h.Configs.LoadingInfo.ConfigFiles {
-		b, err := afero.ReadFile(hugofs.Os, f)
+		hashes, err := hashConfigFiles(f)
 		if err != nil {
 			return nil, err
 		}
-		confHashes = append(confHashes, hashing.XxHashFromStringHexEncoded(string(b)))
+		confHashes = append(confHashes, hashes...)
 	}
 	bs.ConfigHash = hashing.XxHashFromStringHexEncoded(confHashes...)
 
 	return bs, nil
+}
+
+// hashConfigFiles hashes the config file p, or, when p is a directory (e.g. config/_default),
+// the config files below it.
+func hashConfigFiles(p string) ([]string, error) {
+	fi, err := hugofs.Os.Stat(p)
+	if err != nil {
+		return nil, err
+	}
+	if !fi.IsDir() {
+		b, err := afero.ReadFile(hugofs.Os, p)
+		if err != nil {
+			return nil, err
+		}
+		return []string{hashing.XxHashFromStringHexEncoded(filepath.Base(p), string(b))}, nil
+	}
+	var hashes []string
+	err = afero.Walk(hugofs.Os, p, func(path string, fi os.FileInfo, err error) error {
+		if err != nil || fi.IsDir() || !config.IsValidConfigFilename(path) {
+			return err
+		}
+		b, err := afero.ReadFile(hugofs.Os, path)
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(p, path)
+		hashes = append(hashes, hashing.XxHashFromStringHexEncoded(filepath.ToSlash(rel), string(b)))
+		return nil
+	})
+	return hashes, err
 }
 
 func (h *HugoSites) incrementalLoadState() (*buildState, error) {

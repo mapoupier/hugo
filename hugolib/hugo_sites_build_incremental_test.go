@@ -169,6 +169,26 @@ func TestIncrementalBuildEditConfig(t *testing.T) {
 	b.AssertRenderCountPage(5)
 }
 
+func TestIncrementalBuildConfigDir(t *testing.T) {
+	workingDir := t.TempDir()
+
+	files := strings.ReplaceAll(incrementalFilesTemplate, "-- hugo.toml --", `-- config/_default/params.toml --
+foo = "bar"
+-- config/_default/hugo.toml --`)
+
+	b := buildIncremental(t, workingDir, files)
+	b.AssertRenderCountPage(5)
+	b.AssertLogContains("! failed to fingerprint sources")
+
+	b = buildIncremental(t, workingDir, files)
+	b.AssertRenderCountPage(0)
+
+	files = strings.ReplaceAll(files, `foo = "bar"`, `foo = "baz"`)
+	b = buildIncremental(t, workingDir, files)
+	// Config changed, full build.
+	b.AssertRenderCountPage(5)
+}
+
 func TestIncrementalBuildEditAssetAndData(t *testing.T) {
 	files := strings.ReplaceAll(incrementalFilesTemplate, "-- content/s1/_index.md --", `-- assets/main.css --
 body { color: red; }
