@@ -64,6 +64,7 @@ type AllProvider interface {
 	BuildDrafts() bool
 	Running() bool
 	Watching() bool
+	TrackDependencies() bool
 	NewIdentityManager(opts ...identity.ManagerOption) identity.Manager
 	FastRenderMode() bool
 	PrintUnusedTemplates() bool

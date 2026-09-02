@@ -228,8 +228,8 @@ func TestRebuildRenameTextFileInLeafBundle(t *testing.T) {
 
 		b.RenameFile("content/mysection/mysectionbundle/mysectionbundletext.txt", "content/mysection/mysectionbundle/mysectionbundletext2.txt").Build()
 		b.AssertFileContent("public/mysection/mysectionbundle/index.html", "mysectionbundletext2", "My Section Bundle Text 2 Content.", "Len Resources: 2|")
-		b.AssertRenderCountPage(8)
-		b.AssertRenderCountContent(9)
+		b.AssertRenderCountPage(4)
+		b.AssertRenderCountContent(4)
 	})
 }
 
@@ -259,8 +259,8 @@ func TestRebuildRenameTextFileInBranchBundle(t *testing.T) {
 
 	b.RenameFile("content/mysection/mysectiontext.txt", "content/mysection/mysectiontext2.txt").Build()
 	b.AssertFileContent("public/mysection/index.html", "mysectiontext2", "My Section")
-	b.AssertRenderCountPage(3)
-	b.AssertRenderCountContent(2)
+	b.AssertRenderCountPage(4)
+	b.AssertRenderCountContent(3)
 }
 
 func TestRebuildRenameTextFileInHomeBundle(t *testing.T) {
@@ -276,7 +276,7 @@ func TestRebuildRenameDirectoryWithLeafBundle(t *testing.T) {
 	b := TestRunning(t, rebuildFilesSimple)
 	b.RenameDir("content/mysection/mysectionbundle", "content/mysection/mysectionbundlerenamed").Build()
 	b.AssertFileContent("public/mysection/mysectionbundlerenamed/index.html", "My Section Bundle")
-	b.AssertRenderCountPage(2)
+	b.AssertRenderCountPage(4)
 }
 
 func TestRebuildRenameDirectoryWithBranchBundle(t *testing.T) {
@@ -285,7 +285,7 @@ func TestRebuildRenameDirectoryWithBranchBundle(t *testing.T) {
 	b.AssertFileContent("public/mysectionrenamed/index.html", "My Section")
 	b.AssertFileContent("public/mysectionrenamed/mysectionbundle/index.html", "My Section Bundle")
 	b.AssertFileContent("public/mysectionrenamed/mysectionbundle/mysectionbundletext.txt", "My Section Bundle Text 2 Content.")
-	b.AssertRenderCountPage(5)
+	b.AssertRenderCountPage(6)
 }
 
 func TestRebuildRenameDirectoryWithRegularPageUsedInHome(t *testing.T) {
@@ -384,7 +384,7 @@ func TestRebuildRenameDirectoryWithBranchBundleFastRender(t *testing.T) {
 	b.AssertFileContent("public/mysectionrenamed/index.html", "My Section")
 	b.AssertFileContent("public/mysectionrenamed/mysectionbundle/index.html", "My Section Bundle")
 	b.AssertFileContent("public/mysectionrenamed/mysectionbundle/mysectionbundletext.txt", "My Section Bundle Text 2 Content.")
-	b.AssertRenderCountPage(5)
+	b.AssertRenderCountPage(6)
 }
 
 func TestRebuilErrorRecovery(t *testing.T) {
@@ -475,6 +475,77 @@ Pages: {{ range .RegularPages }}{{ .RelPermalink }}|{{ end }}$
 	b.AssertFileContent("public/index.html", "Pages: /p1/|$")
 	b.AddFiles("content/p2.md", ``).Build()
 	b.AssertFileContent("public/index.html", "Pages: /p1/|/p2/|$")
+}
+
+const rebuildFilesAddPageToSection = `
+-- hugo.toml --
+disableLiveReload = true
+disableKinds = ["term", "taxonomy", "sitemap", "robotstxt", "404", "rss"]
+-- content/s1/_index.md --
+-- content/s2/p1.md --
+-- layouts/page.html --
+Page: {{ .Title }}|
+-- layouts/list.html --
+List: {{ .Title }}|{{ range .RegularPagesRecursive }}{{ .RelPermalink }}|{{ end }}$
+`
+
+func TestRebuildAddPageToEmptySectionRerendersAncestors(t *testing.T) {
+	b := TestRunning(t, rebuildFilesAddPageToSection)
+	b.AssertFileContent("public/s1/index.html", "List: |$")
+	b.AddFiles("content/s1/p2.md", ``).Build()
+	b.AssertFileContent("public/s1/index.html", "/s1/p2/|$")
+	b.AssertFileContent("public/index.html", "/s1/p2/|")
+	// The new page, its section and home. s2 and s2/p1 must not re-render.
+	b.AssertRenderCountPage(3)
+}
+
+func TestRebuildAddPageInNewSectionDir(t *testing.T) {
+	files := `
+-- hugo.toml --
+disableLiveReload = true
+disableKinds = ["term", "taxonomy", "sitemap", "robotstxt", "404", "rss"]
+-- content/p1.md --
+-- layouts/page.html --
+Page: {{ .Title }}|
+-- layouts/list.html --
+List: {{ .Title }}|{{ range .RegularPagesRecursive }}{{ .RelPermalink }}|{{ end }}$
+`
+	b := TestRunning(t, files)
+	b.AssertFileContent("public/index.html", "List: |/p1/|$")
+	b.AddFiles("content/s1/p2.md", ``).Build()
+	b.AssertFileContent("public/index.html", "/p1/|/s1/p2/|$")
+	b.AssertFileContent("public/s1/index.html", "/s1/p2/|$")
+}
+
+func TestRebuildRemovePageRerendersParentSectionList(t *testing.T) {
+	files := `
+-- hugo.toml --
+disableLiveReload = true
+disableKinds = ["term", "taxonomy", "sitemap", "robotstxt", "404", "rss"]
+-- content/s1/p1.md --
+-- content/s1/p2.md --
+-- layouts/page.html --
+Page: {{ .Title }}|
+-- layouts/list.html --
+List: {{ .Title }}|{{ range .RegularPagesRecursive }}{{ .RelPermalink }}|{{ end }}$
+`
+	b := TestRunning(t, files)
+	b.AssertFileContent("public/s1/index.html", "/s1/p1/|/s1/p2/|$")
+	b.RemoveFiles("content/s1/p2.md").Build()
+	b.AssertFileContent("public/s1/index.html", "/s1/p1/|$")
+	b.AssertFileContent("public/index.html", "! /s1/p2/")
+}
+
+func TestRebuildAddPageToEmptySectionFastRenderMode(t *testing.T) {
+	recentlyTouched := types.NewEvictingQueue[string](10)
+	b := TestRunning(t, rebuildFilesAddPageToSection, func(cfg *IntegrationTestConfig) {
+		cfg.BuildCfg = BuildCfg{RecentlyTouched: recentlyTouched}
+	})
+	b.AddFiles("content/s1/p2.md", ``).Build()
+	// Ancestors are pushed to RecentlyTouched, so the section index
+	// updates immediately even in fast render mode.
+	b.AssertFileContent("public/s1/index.html", "/s1/p2/|$")
+	b.AssertFileContent("public/index.html", "/s1/p2/|")
 }
 
 func TestRebuildAddPageWithSpaceListPagesInHome(t *testing.T) {

@@ -214,6 +214,25 @@ func (t *pageTrees) collectIdentitiesSurroundingIn(key string, maxSamples int, t
 	return ids
 }
 
+// collectIdentitiesAncestors collects the identities of the ancestor sections
+// of key, up to and including home (stored at key "").
+func (t *pageTrees) collectIdentitiesAncestors(key string) []identity.Identity {
+	var ids []identity.Identity
+	for key != "" {
+		key = path.Dir(key)
+		if key == "/" || key == "." {
+			key = ""
+		}
+		if n, ok := t.treePages.GetRaw(key); ok {
+			cnh.toForEachIdentityProvider(n).ForEeachIdentity(func(id identity.Identity) bool {
+				ids = append(ids, id)
+				return false
+			})
+		}
+	}
+	return ids
+}
+
 func (t *pageTrees) DeletePageAndResourcesBelow(ss ...string) {
 	t.resourceTrees.Lock(true)
 	defer t.resourceTrees.Unlock(true)

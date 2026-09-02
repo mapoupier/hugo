@@ -357,7 +357,7 @@ func (m *pageMap) addPagesFromGoTmplFi(fi hugofs.FileMetaInfo, buildConfig *Buil
 					}
 				},
 				DependencyManager: s.Conf.NewIdentityManager(),
-				Watching:          s.Conf.Watching(),
+				Watching:          s.Conf.TrackDependencies(),
 				HandlePage: func(pt *pagesfromdata.PagesFromTemplate, pe *pagemeta.PageConfigEarly) error {
 					s := pt.Site.(*Site)
 
@@ -383,18 +383,14 @@ func (m *pageMap) addPagesFromGoTmplFi(fi hugofs.FileMetaInfo, buildConfig *Buil
 						} else {
 							pt.AddChange(cnh.GetIdentity(u))
 							// New content not in use anywhere.
-							// To make sure that these gets listed in any site.RegularPages ranges or similar
-							// we could invalidate everything, but first try to collect a sample set
-							// from the surrounding pages.
-							var surroundingIDs []identity.Identity
+							// Invalidate its ancestors so their listings pick it up,
+							// and sample the surrounding pages to catch other list pages.
 							ids := h.pageTrees.collectIdentitiesSurrounding(pi.Base(), 10)
-							if len(ids) > 0 {
-								surroundingIDs = append(surroundingIDs, ids...)
-							} else {
-								// No surrounding pages found, so invalidate everything.
-								surroundingIDs = []identity.Identity{identity.GenghisKhan}
+							ids = append(ids, h.pageTrees.collectIdentitiesAncestors(ps.pathInfo.Base())...)
+							if len(ids) == 0 {
+								ids = []identity.Identity{identity.GenghisKhan}
 							}
-							for _, id := range surroundingIDs {
+							for _, id := range ids {
 								pt.AddChange(id)
 							}
 						}

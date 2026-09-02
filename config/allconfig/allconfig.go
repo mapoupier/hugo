@@ -72,6 +72,10 @@ type InternalConfig struct {
 	Watch          bool
 	FastRenderMode bool
 	LiveReloadPort int
+
+	// Whether to track dependencies between pages and their sources.
+	// Enabled when watching or when incremental builds are enabled.
+	TrackDependencies bool
 }
 
 // All non-params config keys for language.
@@ -268,6 +272,7 @@ func (c Config) cloneForLang() *Config {
 }
 
 func (c *Config) CompileConfig(logger loggers.Logger) error {
+	c.Internal.TrackDependencies = c.Internal.Watch || c.Incremental
 	var transientErr error
 	s := c.Timeout
 	if _, err := strconv.Atoi(s); err == nil {
@@ -650,6 +655,10 @@ type RootConfig struct {
 	// The named segments to render.
 	// This needs to match the name of the segment in the segments configuration.
 	RenderSegments []string
+
+	// Enable incremental builds: persist build state across builds and only
+	// re-render pages affected by changes since the last build. Experimental.
+	Incremental bool
 
 	// Disable the injection of the Hugo generator tag on the home page.
 	DisableHugoGeneratorInject bool

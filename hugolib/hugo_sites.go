@@ -100,6 +100,8 @@ type HugoSites struct {
 	translationKeyPages *hmaps.SliceCache[page.Page]
 
 	pageTrees                    *pageTrees
+	incremental                  *incrementalBuild
+	incrementalInitOnce          sync.Once
 	previousPageTreesWalkContext *doctree.WalkContext[contentNode]                    // Set for rebuilds only.
 	previousSeenTerms            *maphelpers.ConcurrentMap[term, sitesmatrix.Vectors] // Set for rebuilds only.
 
@@ -627,11 +629,18 @@ type BuildCfg struct {
 	NoBuildLock bool
 
 	testCounters *buildCounters
+
+	// Page outputs that are up to date and can be skipped in this incremental build.
+	incrementalSkip map[incrementalSkipKey]bool
 }
 
 // shouldRender returns whether this output format should be rendered or not.
 func (cfg *BuildCfg) shouldRender(infol logg.LevelLogger, p *pageState) bool {
 	if p.skipRender() {
+		return false
+	}
+
+	if cfg.incrementalSkip != nil && cfg.incrementalSkip[incrementalSkipKey{p.s.siteVector, p.Path(), p.pageOutput.f.Name}] {
 		return false
 	}
 

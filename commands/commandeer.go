@@ -610,6 +610,7 @@ func applyLocalFlagsBuildConfig(cmd *cobra.Command, r *rootCommand) {
 func applyLocalFlagsBuild(cmd *cobra.Command, r *rootCommand) {
 	applyLocalFlagsBuildConfig(cmd, r)
 	cmd.Flags().Bool("cleanDestinationDir", false, "remove files from destination not found in static directories")
+	cmd.Flags().Bool("incremental", false, "experimental: only re-render pages affected by changes since the last build")
 	cmd.Flags().BoolP("buildDrafts", "D", false, "include content marked as draft")
 	cmd.Flags().BoolP("buildFuture", "F", false, "include content with publishdate in the future")
 	cmd.Flags().BoolP("buildExpired", "E", false, "include expired content")

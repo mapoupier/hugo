@@ -194,6 +194,8 @@ func (h *HugoSites) Build(config BuildCfg, events ...fsnotify.Event) error {
 	}
 
 	if prepareErr == nil {
+		h.incrementalPrepareRender(conf)
+
 		if err := h.render(infol, conf); err != nil {
 			h.SendError(fmt.Errorf("render: %w", err))
 		}
@@ -245,6 +247,10 @@ func (h *HugoSites) Build(config BuildCfg, events ...fsnotify.Event) error {
 	errorCount := h.Log.LoggCount(logg.LevelError) + loggers.Log().LoggCount(logg.LevelError)
 	if errorCount > 0 {
 		return fmt.Errorf("logged %d error(s)", errorCount)
+	}
+
+	if err := h.incrementalSaveState(); err != nil {
+		h.Log.Warnf("incremental: failed to save build state: %s", err)
 	}
 
 	return nil
@@ -787,7 +793,7 @@ func (h *HugoSites) writeBuildStats() error {
 	// hugo_stats.json so that elements from pages not rendered in this build
 	// are preserved (e.g. so Tailwind doesn't strip their classes).
 	// See issue 14939.
-	if len(h.Configs.Base.RenderSegments) > 0 && len(existingContent) > 0 {
+	if (len(h.Configs.Base.RenderSegments) > 0 || (h.incremental != nil && h.incremental.skipped > 0)) && len(existingContent) > 0 {
 		var existing publisher.PublishStats
 		if err := json.Unmarshal(existingContent, &existing); err == nil {
 			htmlElements.Merge(existing.HTMLElements)
@@ -1128,20 +1134,19 @@ func (h *HugoSites) processPartialFileEvents(ctx context.Context, l logg.LevelLo
 
 	if len(addedContentPaths) > 0 {
 		// These content files are new and not in use anywhere.
-		// To make sure that these gets listed in any site.RegularPages ranges or similar
-		// we could invalidate everything, but first try to collect a sample set
-		// from the surrounding pages.
-		var surroundingIDs []identity.Identity
+		// Invalidate their ancestors (sections up the tree and home) so their
+		// listings pick them up, and sample the surrounding pages to catch
+		// other list pages (e.g. pages ranging site.RegularPages).
+		var ids []identity.Identity
 		for _, p := range addedContentPaths {
-			if ids := h.pageTrees.collectIdentitiesSurrounding(p.Base(), 10); len(ids) > 0 {
-				surroundingIDs = append(surroundingIDs, ids...)
-			}
+			ids = append(ids, h.pageTrees.collectIdentitiesSurrounding(p.Base(), 10)...)
+			ids = append(ids, h.pageTrees.collectIdentitiesAncestors(p.Base())...)
 		}
 
-		if len(surroundingIDs) > 0 {
-			changes = append(changes, surroundingIDs...)
+		if len(ids) > 0 {
+			changes = append(changes, ids...)
 		} else {
-			// No surrounding pages found, so invalidate everything.
+			// Should not happen (home always exists), but be safe.
 			changes = append(changes, identity.GenghisKhan)
 		}
 	}

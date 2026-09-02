@@ -228,7 +228,7 @@ func (ns *Namespace) IncludeCached(ctx context.Context, name string, context any
 
 	r, found, err := ns.cachedPartials.cache.GetOrCreate(keyString, func(string) (includeResult, error) {
 		var depsManagerShared identity.Manager
-		if ns.deps.Conf.Watching() {
+		if ns.deps.Conf.TrackDependencies() {
 			// We need to create a shared dependency manager to pass downwards
 			// and add those same dependencies to any cached invocation of this partial.
 			depsManagerShared = identity.NewManager()
@@ -237,7 +237,7 @@ func (ns *Namespace) IncludeCached(ctx context.Context, name string, context any
 		// Mark the ctx so templates.Defer can reject being called from a cached body.
 		ctx = tpl.Context.IsInPartialCached.Set(ctx, true)
 		r := ns.doInclude(ctx, keyString, ti, context)
-		if ns.deps.Conf.Watching() {
+		if ns.deps.Conf.TrackDependencies() {
 			r.mangager = depsManagerShared
 		}
 		return r, r.err

@@ -203,7 +203,7 @@ func (d *Deps) Init() error {
 	}
 
 	if d.MemCache == nil {
-		d.MemCache = dynacache.New(dynacache.Options{Watching: d.Conf.Watching(), Log: d.Log})
+		d.MemCache = dynacache.New(dynacache.Options{Watching: d.Conf.TrackDependencies(), Log: d.Log})
 	}
 
 	if d.PathSpec == nil {
