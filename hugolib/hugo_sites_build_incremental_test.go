@@ -189,6 +189,48 @@ foo = "bar"
 	b.AssertRenderCountPage(5)
 }
 
+func TestIncrementalBuildStaticChanges(t *testing.T) {
+	workingDir := t.TempDir()
+
+	// Written outside the txtar so they are not rewritten between builds.
+	writeStatic := func(name, content string) {
+		filename := filepath.Join(workingDir, "static", filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(filename), 0o777); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filename, []byte(content), 0o666); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeStatic("a.txt", "a1")
+	writeStatic("sub/b.txt", "b1")
+
+	b := buildIncremental(t, workingDir, incrementalFilesTemplate)
+	_, _, ok := b.H.IncrementalStaticChanges("")
+	b.Assert(ok, qt.IsFalse)
+
+	b = buildIncremental(t, workingDir, incrementalFilesTemplate)
+	changed, total, ok := b.H.IncrementalStaticChanges("")
+	b.Assert(ok, qt.IsTrue)
+	b.Assert(total, qt.Equals, 2)
+	b.Assert(changed, qt.HasLen, 0)
+
+	writeStatic("a.txt", "a1 edited")
+	writeStatic("sub/c.txt", "c1")
+	b = buildIncremental(t, workingDir, incrementalFilesTemplate)
+	changed, total, ok = b.H.IncrementalStaticChanges("")
+	b.Assert(ok, qt.IsTrue)
+	b.Assert(total, qt.Equals, 3)
+	b.Assert(changed, qt.DeepEquals, []string{"/a.txt", "/sub/c.txt"})
+
+	// Publish dir removed, full sync and full render.
+	b.Assert(os.RemoveAll(filepath.Join(workingDir, "public")), qt.IsNil)
+	b = buildIncremental(t, workingDir, incrementalFilesTemplate)
+	_, _, ok = b.H.IncrementalStaticChanges("")
+	b.Assert(ok, qt.IsFalse)
+	b.AssertRenderCountPage(5)
+}
+
 func TestIncrementalBuildEditAssetAndData(t *testing.T) {
 	files := strings.ReplaceAll(incrementalFilesTemplate, "-- content/s1/_index.md --", `-- assets/main.css --
 body { color: red; }

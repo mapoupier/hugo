@@ -1068,7 +1068,7 @@ func (s *staticSyncer) isStatic(h *hugolib.HugoSites, filename string) bool {
 func (s *staticSyncer) syncsStaticEvents(staticEvents []fsnotify.Event) error {
 	c := s.c
 
-	syncFn := func(sourceFs *filesystems.SourceFilesystem) (uint64, error) {
+	syncFn := func(_ string, sourceFs *filesystems.SourceFilesystem) (uint64, error) {
 		publishDir := helpers.FilePathSeparator
 
 		if sourceFs.PublishFolder != "" {

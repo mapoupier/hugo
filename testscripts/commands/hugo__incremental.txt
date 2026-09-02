@@ -2,19 +2,39 @@
 
 hugo --incremental
 stdout 'Pages.*|3'
+stdout 'Static files.*|2'
 checkfile public/p1/index.html
 checkfile $WORK/hugocache/hugo_build_state.json.gz
 grep 'P1 v1' public/p1/index.html
+grep 's1 v1' public/s1.txt
+grep 's2 v1' public/sub/s2.txt
 
 # No changes.
-hugo --incremental
+hugo --incremental --logLevel info
+stderr 'incremental: skipping render of 3 page outputs'
+stderr 'incremental: synced 0 of 2 static files'
 checkfile public/p1/index.html
+grep 's1 v1' public/s1.txt
 
-# Edit a page.
+# Edit a page and a static file, add a static file.
 replace content/p1.md 'P1 v1' 'P1 v2'
-hugo --incremental
+replace static/s1.txt 's1 v1' 's1 v2 edited'
+mkdir static/sub/new
+cp static/s1.txt static/sub/new/s3.txt
+hugo --incremental --logLevel info
+stderr 'incremental: synced 2 of 3 static files'
 grep 'P1 v2' public/p1/index.html
 grep '/p1/' public/index.html
+grep 's1 v2' public/s1.txt
+grep 's2 v1' public/sub/s2.txt
+grep 's1 v2' public/sub/new/s3.txt
+
+# Publish dir removed.
+rm public
+hugo --incremental --logLevel info
+stderr 'publish directory missing'
+grep 'P1 v2' public/p1/index.html
+grep 's2 v1' public/sub/s2.txt
 
 -- hugo.toml --
 baseURL = "http://example.org/"
@@ -33,3 +53,7 @@ P1 v1
 title: "P2"
 ---
 P2 v1
+-- static/s1.txt --
+s1 v1
+-- static/sub/s2.txt --
+s2 v1

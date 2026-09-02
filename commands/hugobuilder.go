@@ -459,7 +459,7 @@ func (c *hugoBuilder) copyStatic() (map[string]uint64, error) {
 	return m, err
 }
 
-func (c *hugoBuilder) copyStaticTo(sourceFs *filesystems.SourceFilesystem) (uint64, error) {
+func (c *hugoBuilder) copyStaticTo(lang string, sourceFs *filesystems.SourceFilesystem) (uint64, error) {
 	infol := c.r.logger.InfoCommand("static")
 	publishDir := helpers.FilePathSeparator
 
@@ -483,6 +483,26 @@ func (c *hugoBuilder) copyStaticTo(sourceFs *filesystems.SourceFilesystem) (uint
 
 	syncer.SrcFs = fs
 
+	h, err := c.hugo()
+	if err != nil {
+		return 0, err
+	}
+	if changed, total, ok := h.IncrementalStaticChanges(lang); ok {
+		start := time.Now()
+		for _, p := range changed {
+			rel := filepath.FromSlash(p)
+			dst := filepath.Join(publishDir, rel)
+			if err := syncer.DestFs.MkdirAll(filepath.Dir(dst), 0o777); err != nil {
+				return 0, err
+			}
+			if err := syncer.Sync(dst, rel); err != nil {
+				return 0, err
+			}
+		}
+		loggers.TimeTrackf(infol, start, nil, "incremental: synced %d of %d static files to %s", len(changed), total, publishDir)
+		return uint64(total), nil
+	}
+
 	if syncer.Delete {
 		infol.Logf("removing all files from destination that don't exist in static dirs")
 
@@ -502,8 +522,7 @@ func (c *hugoBuilder) copyStaticTo(sourceFs *filesystems.SourceFilesystem) (uint
 
 	// because we are using a baseFs (to get the union right).
 	// set sync src to root
-	err := syncer.Sync(publishDir, helpers.FilePathSeparator)
-	if err != nil {
+	if err := syncer.Sync(publishDir, helpers.FilePathSeparator); err != nil {
 		return 0, err
 	}
 	loggers.TimeTrackf(infol, start, nil, "syncing static files to %s", publishDir)
@@ -514,7 +533,7 @@ func (c *hugoBuilder) copyStaticTo(sourceFs *filesystems.SourceFilesystem) (uint
 	return numFiles, err
 }
 
-func (c *hugoBuilder) doWithPublishDirs(f func(sourceFs *filesystems.SourceFilesystem) (uint64, error)) (map[string]uint64, error) {
+func (c *hugoBuilder) doWithPublishDirs(f func(lang string, sourceFs *filesystems.SourceFilesystem) (uint64, error)) (map[string]uint64, error) {
 	langCount := make(map[string]uint64)
 
 	h, err := c.hugo()
@@ -529,7 +548,7 @@ func (c *hugoBuilder) doWithPublishDirs(f func(sourceFs *filesystems.SourceFiles
 	}
 
 	for lang, fs := range staticFilesystems {
-		cnt, err := f(fs)
+		cnt, err := f(lang, fs)
 		if err != nil {
 			return langCount, err
 		}
@@ -603,6 +622,10 @@ func (c *hugoBuilder) fullBuild(noBuildLock bool) error {
 		g.Go(copyStaticFunc)
 		g.Go(buildSitesFunc)
 		if err := g.Wait(); err != nil {
+			// The build state may have been saved before the static sync failed.
+			if h, herr := c.hugo(); herr == nil {
+				h.IncrementalDiscardState()
+			}
 			return err
 		}
 	}

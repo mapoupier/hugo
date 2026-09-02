@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/gohugoio/hugo/common/hashing"
+	"github.com/gohugoio/hugo/common/herrors"
 	"github.com/gohugoio/hugo/common/hugo"
 	"github.com/gohugoio/hugo/common/paths"
 	"github.com/gohugoio/hugo/common/types"
@@ -42,7 +43,7 @@ import (
 // that are unaffected by source changes since the last build.
 
 const (
-	buildStateVersion  = 1
+	buildStateVersion  = 2
 	buildStateFilename = "hugo_build_state.json.gz"
 )
 
@@ -50,6 +51,7 @@ type buildState struct {
 	Version     int
 	HugoVersion string
 	ConfigHash  string
+	PublishDir  string
 
 	// Component -> path -> content hash.
 	Files map[string]map[string]string
@@ -92,14 +94,98 @@ type incrementalBuild struct {
 }
 
 func (h *HugoSites) incrementalEnabled(conf *BuildCfg) bool {
+	return h.incrementalEnabledBase() &&
+		!conf.SkipRender &&
+		!conf.PartialReRender &&
+		h.BuildState.BuildCounter.Load() == 0
+}
+
+func (h *HugoSites) incrementalEnabledBase() bool {
 	c := h.Configs.Base
 	return c.Incremental &&
 		!c.Internal.Watch &&
 		!c.Internal.Running &&
-		!c.CleanDestinationDir &&
-		!conf.SkipRender &&
-		!conf.PartialReRender &&
-		h.BuildState.BuildCounter.Load() == 0
+		!c.CleanDestinationDir
+}
+
+func (h *HugoSites) incrementalPublishDir() string {
+	return paths.AbsPathify(h.Conf.WorkingDir(), h.Conf.Dirs().PublishDir)
+}
+
+// incrementalInit fingerprints the sources and loads the previous build state.
+// It is safe to call from multiple goroutines; the work is done once.
+func (h *HugoSites) incrementalInit() *incrementalBuild {
+	h.incrementalInitOnce.Do(func() {
+		cur, err := h.incrementalFingerprint()
+		if err != nil {
+			h.Log.Warnf("incremental: failed to fingerprint sources, doing a full build: %s", err)
+			return
+		}
+		ib := &incrementalBuild{cur: cur}
+		h.incremental = ib
+
+		prev, err := h.incrementalLoadState()
+		if err != nil {
+			h.Log.Infof("incremental: %s, doing a full build", err)
+			return
+		}
+		if prev == nil {
+			h.Log.Infof("incremental: no previous build state, doing a full build")
+			return
+		}
+		if prev.HugoVersion != cur.HugoVersion || prev.ConfigHash != cur.ConfigHash || prev.PublishDir != cur.PublishDir {
+			h.Log.Infof("incremental: Hugo version, configuration or publish directory changed, doing a full build")
+			return
+		}
+		if _, err := hugofs.Os.Stat(cur.PublishDir); err != nil {
+			h.Log.Infof("incremental: publish directory missing, doing a full build")
+			return
+		}
+		ib.prev = prev
+		ib.prevPages = make(map[string]buildStatePage)
+		for _, p := range prev.Pages {
+			ib.prevPages[statePageKey(p.Site, p.Path, p.Format)] = p
+		}
+	})
+	return h.incremental
+}
+
+func staticComponent(lang string) string {
+	if lang == "" {
+		return files.ComponentFolderStatic
+	}
+	return files.ComponentFolderStatic + "/" + lang
+}
+
+// IncrementalStaticChanges returns the static files (slash separated, leading slash)
+// that need to be synced to the publish dir for the given language and the total
+// number of static files. ok is false when a full sync is needed.
+func (h *HugoSites) IncrementalStaticChanges(lang string) (changed []string, total int, ok bool) {
+	if !h.incrementalEnabledBase() {
+		return
+	}
+	ib := h.incrementalInit()
+	if ib == nil || ib.prev == nil {
+		return
+	}
+	c := staticComponent(lang)
+	d := diffFingerprints(
+		map[string]map[string]string{c: ib.prev.Files[c]},
+		map[string]map[string]string{c: ib.cur.Files[c]},
+	)
+	changed = append(d.changed[c], d.added[c]...)
+	sort.Strings(changed)
+	return changed, len(ib.cur.Files[c]), true
+}
+
+// IncrementalDiscardState removes the persisted build state, e.g. after a failed static sync.
+func (h *HugoSites) IncrementalDiscardState() {
+	if h.incremental == nil {
+		return
+	}
+	if err := hugofs.Os.Remove(h.incrementalStateFilename()); err != nil && !herrors.IsNotExist(err) {
+		h.Log.Warnf("incremental: failed to remove build state: %s", err)
+	}
 }
 
 func (h *HugoSites) incrementalStateFilename() string {
@@ -113,35 +199,11 @@ func (h *HugoSites) incrementalPrepareRender(conf *BuildCfg) {
 		return
 	}
 
-	ib := &incrementalBuild{}
-	h.incremental = ib
-
-	cur, err := h.incrementalFingerprint()
-	if err != nil {
-		h.Log.Warnf("incremental: failed to fingerprint sources, doing a full build: %s", err)
-		h.incremental = nil
+	ib := h.incrementalInit()
+	if ib == nil || ib.prev == nil {
 		return
 	}
-	ib.cur = cur
-
-	prev, err := h.incrementalLoadState()
-	if err != nil {
-		h.Log.Infof("incremental: %s, doing a full build", err)
-		return
-	}
-	if prev == nil {
-		h.Log.Infof("incremental: no previous build state, doing a full build")
-		return
-	}
-	if prev.HugoVersion != cur.HugoVersion || prev.ConfigHash != cur.ConfigHash {
-		h.Log.Infof("incremental: Hugo version or configuration changed, doing a full build")
-		return
-	}
-	ib.prev = prev
-	ib.prevPages = make(map[string]buildStatePage)
-	for _, p := range prev.Pages {
-		ib.prevPages[statePageKey(p.Site, p.Path, p.Format)] = p
-	}
+	prev, cur := ib.prev, ib.cur
 
 	changes, dirty, full := h.incrementalChanges(prev, cur)
 	if full {
@@ -366,37 +428,55 @@ func (h *HugoSites) incrementalFingerprint() (*buildState, error) {
 	bs := &buildState{
 		Version:     buildStateVersion,
 		HugoVersion: hugo.CurrentVersion.String(),
+		PublishDir:  h.incrementalPublishDir(),
 		Files:       make(map[string]map[string]string),
 	}
 
+	hashContent := func(fi hugofs.FileMetaInfo) (string, error) {
+		f, err := fi.Meta().Open()
+		if err != nil {
+			return "", err
+		}
+		defer f.Close()
+		return hashing.XxHashFromReaderHexEncoded(f)
+	}
+	// Static files can be large and are copied verbatim; use size and mtime like rsync does.
+	hashStat := func(fi hugofs.FileMetaInfo) (string, error) {
+		return fmt.Sprintf("%d:%d", fi.Size(), fi.ModTime().UnixNano()), nil
+	}
+
+	type component struct {
+		name       string
+		fs         afero.Fs
+		ignoreFile func(string) bool
+		hash       func(hugofs.FileMetaInfo) (string, error)
+	}
+
 	sfs := h.BaseFs.SourceFilesystems
-	for _, c := range []struct {
-		name string
-		fs   afero.Fs
-	}{
-		{files.ComponentFolderContent, sfs.Content.Fs},
-		{files.ComponentFolderLayouts, sfs.Layouts.Fs},
-		{files.ComponentFolderAssets, sfs.Assets.Fs},
-		{files.ComponentFolderData, sfs.Data.Fs},
-		{files.ComponentFolderI18n, sfs.I18n.Fs},
-	} {
+	components := []component{
+		{files.ComponentFolderContent, sfs.Content.Fs, h.SourceSpec.IgnoreFile, hashContent},
+		{files.ComponentFolderLayouts, sfs.Layouts.Fs, h.SourceSpec.IgnoreFile, hashContent},
+		{files.ComponentFolderAssets, sfs.Assets.Fs, h.SourceSpec.IgnoreFile, hashContent},
+		{files.ComponentFolderData, sfs.Data.Fs, h.SourceSpec.IgnoreFile, hashContent},
+		{files.ComponentFolderI18n, sfs.I18n.Fs, h.SourceSpec.IgnoreFile, hashContent},
+	}
+	for lang, fs := range sfs.Static {
+		components = append(components, component{staticComponent(lang), fs.Fs, nil, hashStat})
+	}
+
+	for _, c := range components {
 		m := make(map[string]string)
 		bs.Files[c.name] = m
 		w := hugofs.NewWalkway(
 			hugofs.WalkwayConfig{
 				Fs:         c.fs,
-				IgnoreFile: h.SourceSpec.IgnoreFile,
+				IgnoreFile: c.ignoreFile,
 				PathParser: h.Conf.PathParser(),
 				WalkFn: func(ctx context.Context, path string, fi hugofs.FileMetaInfo) error {
 					if fi.IsDir() {
 						return nil
 					}
-					f, err := fi.Meta().Open()
-					if err != nil {
-						return err
-					}
-					hash, err := hashing.XxHashFromReaderHexEncoded(f)
-					f.Close()
+					hash, err := c.hash(fi)
 					if err != nil {
 						return err
 					}

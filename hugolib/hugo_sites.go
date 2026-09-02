@@ -101,6 +101,7 @@ type HugoSites struct {
 
 	pageTrees                    *pageTrees
 	incremental                  *incrementalBuild
+	incrementalInitOnce          sync.Once
 	previousPageTreesWalkContext *doctree.WalkContext[contentNode]                    // Set for rebuilds only.
 	previousSeenTerms            *maphelpers.ConcurrentMap[term, sitesmatrix.Vectors] // Set for rebuilds only.
 
